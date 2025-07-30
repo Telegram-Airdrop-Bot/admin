@@ -23,6 +23,7 @@ import dayjs from 'dayjs';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import config from './config';
+import { adminSocket, initializeAdminSocket } from './socket';
 
 const drawerWidth = 240;
 
@@ -99,47 +100,83 @@ function App() {
 
   // Socket.IO for real-time
   useEffect(() => {
-    const socket = io(config.socketUrl);
-    socket.on('new_message', (data) => {
+    // Initialize admin socket
+    initializeAdminSocket();
+
+    // Set up admin notification listener
+    adminSocket.onAdminNotification((data) => {
+      console.log('📢 New user message:', data);
+      
       // Find user
       const user = users.find(u => u.user_id === data.user_id);
       if (!user) return;
+      
       // Play sound
       if (audio.current) audio.current.play();
+      
       // Open chat window or bring to front
       setOpenChats(prev => {
         const exists = prev.find(c => c.user.user_id === user.user_id);
         if (exists) {
           // Fetch latest messages for this user
-          fetch(`${config.apiUrl}/chat/${user.user_id}/messages`, { credentials: 'include' })
-            .then(res => res.json ? res.json() : res.text())
+          fetch(`${config.apiUrl}/chat/${user.user_id}`, { credentials: 'include' })
+            .then(res => res.json())
             .then(data => {
-              let msgs = [];
-              if (Array.isArray(data)) {
-                msgs = data.map(([sender, message, timestamp]) => ({ sender, message, timestamp }));
-              } else if (typeof data === 'string') {
-                msgs = [{ sender: 'system', message: data }];
+              if (data.status === 'success') {
+                const msgs = data.messages.map(msg => ({ 
+                  sender: msg.sender, 
+                  message: msg.message, 
+                  timestamp: msg.timestamp 
+                }));
+                setOpenChats(prev2 => prev2.map(c2 => 
+                  c2.user.user_id === user.user_id ? { ...c2, messages: msgs } : c2
+                ));
               }
-              setOpenChats(prev2 => prev2.map(c2 => c2.user.user_id === user.user_id ? { ...c2, messages: msgs } : c2));
             });
           return prev;
         }
+        
         // If not open, open and fetch messages
-        fetch(`${config.apiUrl}/chat/${user.user_id}/messages`, { credentials: 'include' })
-          .then(res => res.json ? res.json() : res.text())
+        fetch(`${config.apiUrl}/chat/${user.user_id}`, { credentials: 'include' })
+          .then(res => res.json())
           .then(data => {
-            let msgs = [];
-            if (Array.isArray(data)) {
-              msgs = data.map(([sender, message, timestamp]) => ({ sender, message, timestamp }));
-            } else if (typeof data === 'string') {
-              msgs = [{ sender: 'system', message: data }];
+            if (data.status === 'success') {
+              const msgs = data.messages.map(msg => ({ 
+                sender: msg.sender, 
+                message: msg.message, 
+                timestamp: msg.timestamp 
+              }));
+              setOpenChats(prev2 => [...prev2, { user, minimized: false, messages: msgs, chatInput: '' }]);
             }
-            setOpenChats(prev2 => [...prev2, { user, minimized: false, messages: msgs, chatInput: '' }]);
           });
         return prev;
       });
     });
-    return () => socket.disconnect();
+
+    // Set up new message listener
+    adminSocket.onNewMessage((data) => {
+      console.log('📨 New message in admin dashboard:', data);
+      
+      // Update chat messages if chat is open
+      setOpenChats(prev => prev.map(chat => {
+        if (chat.user.user_id === data.user_id) {
+          return {
+            ...chat,
+            messages: [...chat.messages, {
+              sender: data.sender,
+              message: data.message,
+              timestamp: data.timestamp || new Date().toISOString()
+            }]
+          };
+        }
+        return chat;
+      }));
+    });
+
+    return () => {
+      // Cleanup socket listeners
+      console.log('🔌 Admin socket disconnected');
+    };
   }, [users]);
 
   // Function to open chat manually (from sidebar/table)
@@ -149,16 +186,17 @@ function App() {
     // Add a new chat window for this user (will be empty initially)
     setOpenChats(prev => [...prev, { user, minimized: false, messages: [], chatInput: '' }]);
     // Always fetch latest messages when opening chat
-    fetch(`${config.apiUrl}/chat/${user.user_id}/messages`, { credentials: 'include' })
-      .then(res => res.json ? res.json() : res.text())
+    fetch(`${config.apiUrl}/chat/${user.user_id}`, { credentials: 'include' })
+      .then(res => res.json())
       .then(data => {
-        let msgs = [];
-        if (Array.isArray(data)) {
-          msgs = data.map(([sender, message, timestamp]) => ({ sender, message, timestamp }));
-        } else if (typeof data === 'string') {
-          msgs = [{ sender: 'system', message: data }];
+        if (data.status === 'success') {
+          const msgs = data.messages.map(msg => ({ 
+            sender: msg.sender, 
+            message: msg.message, 
+            timestamp: msg.timestamp 
+          }));
+          setOpenChats(prev => prev.map(c => c.user.user_id === user.user_id ? { ...c, messages: msgs } : c));
         }
-        setOpenChats(prev => prev.map(c => c.user.user_id === user.user_id ? { ...c, messages: msgs } : c));
       });
   };
 
@@ -166,17 +204,17 @@ function App() {
   useEffect(() => {
     openChats.forEach((chat, idx) => {
       if (chat.messages.length === 0) {
-        fetch(`${config.apiUrl}/chat/${chat.user.user_id}/messages`, { credentials: 'include' })
-          .then(res => res.json ? res.json() : res.text())
+        fetch(`${config.apiUrl}/chat/${chat.user.user_id}`, { credentials: 'include' })
+          .then(res => res.json())
           .then(data => {
-            // Assume data is array of [sender, message, timestamp]
-            let msgs = [];
-            if (Array.isArray(data)) {
-              msgs = data.map(([sender, message, timestamp]) => ({ sender, message, timestamp }));
-            } else if (typeof data === 'string') {
-              msgs = [{ sender: 'system', message: data }];
+            if (data.status === 'success') {
+              const msgs = data.messages.map(msg => ({ 
+                sender: msg.sender, 
+                message: msg.message, 
+                timestamp: msg.timestamp 
+              }));
+              setOpenChats(prev => prev.map((c, i) => i === idx ? { ...c, messages: msgs } : c));
             }
-            setOpenChats(prev => prev.map((c, i) => i === idx ? { ...c, messages: msgs } : c));
           });
       }
     });
