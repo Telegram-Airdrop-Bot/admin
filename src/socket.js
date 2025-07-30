@@ -3,15 +3,52 @@ import { io } from "socket.io-client";
 // Make sure this matches your backend port!
 export const socket = io("https://joingroup-8835.onrender.com", {
   transports: ["websocket", "polling"],
-  withCredentials: true
+  withCredentials: true,
+  autoConnect: true,
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 20000
+});
+
+// Socket connection status
+let isConnected = false;
+
+// Socket event listeners
+socket.on('connect', () => {
+  console.log('🔌 Socket connected');
+  isConnected = true;
+});
+
+socket.on('disconnect', () => {
+  console.log('🔌 Socket disconnected');
+  isConnected = false;
+});
+
+socket.on('connect_error', (error) => {
+  console.error('❌ Socket connection error:', error);
+  isConnected = false;
+});
+
+socket.on('reconnect', (attemptNumber) => {
+  console.log(`🔌 Socket reconnected after ${attemptNumber} attempts`);
+  isConnected = true;
 });
 
 // Admin socket events and functions
 export const adminSocket = {
+  // Check if socket is connected
+  isConnected: () => isConnected,
+
   // Join admin room to receive all notifications
   joinAdminRoom: () => {
-    socket.emit('admin_join');
-    console.log('👑 Admin joined admin room');
+    if (isConnected) {
+      socket.emit('admin_join');
+      console.log('👑 Admin joined admin room');
+    } else {
+      console.log('⚠️ Socket not connected, cannot join admin room');
+    }
   },
 
   // Listen for admin notifications (new messages from users)
@@ -32,12 +69,16 @@ export const adminSocket = {
 
   // Send message from admin to user
   sendAdminMessage: (user_id, message) => {
-    socket.emit('admin_message', {
-      user_id: user_id,
-      message: message,
-      sender: 'admin'
-    });
-    console.log('📤 Admin message sent to user:', user_id);
+    if (isConnected) {
+      socket.emit('admin_message', {
+        user_id: user_id,
+        message: message,
+        sender: 'admin'
+      });
+      console.log('📤 Admin message sent to user:', user_id);
+    } else {
+      console.log('⚠️ Socket not connected, cannot send message');
+    }
   },
 
   // Get all recent messages for admin
